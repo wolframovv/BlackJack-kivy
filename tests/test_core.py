@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import random
 
 from core.cards import Card, Deck, Hand, cards_is_soft, cards_value
+from core.ranks import RANK_MIN_ELO, delta_for_game, rank_for_elo
 from core.round import BlackjackRound, DEALING, INSURANCE, PLAYER, DEALER, OVER
 from core.storage import Storage, hash_password, check_password
 
@@ -289,6 +290,40 @@ class RoundTests(unittest.TestCase):
         r, _ = play(['8S', '9H', '8C', '7D', '3S', '2H'])
         r.split()
         self.assertEqual(r.total_current_bet, 200)
+
+
+
+class EloTests(unittest.TestCase):
+    class FixedRng:
+        def __init__(self, value):
+            self.value = value
+
+        def randint(self, low, high):
+            self.assert_low, self.assert_high = low, high
+            return self.value
+
+    def test_rank_thresholds_every_200(self):
+        self.assertEqual(RANK_MIN_ELO, tuple(range(0, 2000, 200)))
+        for elo, expected in ((0, 1), (199, 1), (200, 2), (399, 2), (400, 3),
+                              (1599, 8), (1600, 9), (1800, 10), (5000, 10)):
+            self.assertEqual(rank_for_elo(elo), expected, elo)
+
+    def test_win_delta_uses_interactions_and_gambling(self):
+        rng = self.FixedRng(5)
+        # 60 + 20*2 + 7*(1 + 2/2) + 5 = 119
+        self.assertEqual(delta_for_game(100, interactions=2, gambling=2, rng=rng), 119)
+        self.assertEqual((rng.assert_low, rng.assert_high), (1, 9))
+
+    def test_tie_delta_is_10_to_20(self):
+        rng = self.FixedRng(17)
+        self.assertEqual(delta_for_game(0, rng=rng), 17)
+        self.assertEqual((rng.assert_low, rng.assert_high), (10, 20))
+
+    def test_loss_delta_uses_knockouts(self):
+        rng = self.FixedRng(3)
+        # -20 + 10*2 - 3 = -3
+        self.assertEqual(delta_for_game(-100, knockouts=2, rng=rng), -3)
+        self.assertEqual((rng.assert_low, rng.assert_high), (1, 9))
 
 
 class StorageTests(unittest.TestCase):

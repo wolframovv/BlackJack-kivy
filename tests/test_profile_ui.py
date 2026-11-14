@@ -46,6 +46,18 @@ class ProfileTests(ProfileCase):
         self.assertEqual(p.login_label.color, theme.GRAY)             # логин серый
         self.assertLess(p.login_label.font_size, p.name_label.font_size)   # и мелкий
 
+    def test_elo_in_brackets_and_rank_icon_levels(self):
+        p = self.open_profile()
+        self.assertEqual(p.elo_label.text, '(0)')
+        self.assertEqual(p.elo_label.color, theme.GRAY)
+        self.assertTrue(p.rank_icon.source.endswith('elo1.png'))
+        for elo, rank in ((199, 1), (200, 2), (399, 2), (400, 3), (1599, 8),
+                          (1600, 9), (1800, 10)):
+            self.app.user['elo'] = elo
+            p.refresh_texts()
+            self.assertEqual(p.elo_label.text, f'({elo})')
+            self.assertTrue(p.rank_icon.source.endswith(f'elo{rank}.png'), elo)
+
     def test_rename_through_dialog(self):
         p = self.open_profile()
         p.rename_button.press()

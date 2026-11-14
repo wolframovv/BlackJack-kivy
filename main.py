@@ -17,6 +17,7 @@ if not ANDROID:
 
 from kivy.animation import Animation  # noqa: E402
 from kivy.app import App  # noqa: E402
+from kivy.clock import Clock  # noqa: E402
 from kivy.core.window import Window  # noqa: E402
 from kivy.lang import Builder  # noqa: E402
 from kivy.uix.floatlayout import FloatLayout  # noqa: E402
@@ -39,6 +40,7 @@ from ui.screens.menu import MenuScreen  # noqa: E402
 from ui.screens.mode import ModeScreen  # noqa: E402
 from ui.screens.profile import ProfileScreen  # noqa: E402
 from ui.screens.skins import SkinsScreen  # noqa: E402
+from ui.transitions import ArcTransition, SlideTransition  # noqa: E402
 from ui.widgets import AlertPopup, FadeOverlay  # noqa: E402
 
 # куда возвращает кнопка «Назад» с каждого экрана
@@ -46,6 +48,9 @@ BACK_TARGETS = {
     'profile': 'menu', 'leaderboard': 'menu', 'skins': 'menu',
     'mode': 'menu', 'betting': 'mode',
 }
+
+# пункты меню, в которые и обратно ведёт «круговая» анимация
+MENU_ARC_TARGETS = ('mode', 'skins', 'leaderboard', 'profile')
 
 
 class BlackjackApp(App):
@@ -79,7 +84,9 @@ class BlackjackApp(App):
         self.background = ParticleBackground(self.background_path)
         root.add_widget(self.background)
 
-        self.sm = ScreenManager(transition=NoTransition())
+        self._no_transition = NoTransition()
+        self.sm = ScreenManager(transition=self._no_transition)
+        self._transition_token = 0
         self.game = GameScreen(self, name='game')
         self.table_screen = TableScreen(self, name='table')
         for screen in (
@@ -142,14 +149,50 @@ class BlackjackApp(App):
 
     # ---------- навигация ----------
     def go(self, name):
-        """Переход на экран: интерфейс затемняется целиком, экран меняется, затемнение уходит."""
+        """Переход на экран. Обычные переходы — через затемнение, а меню/режим/ставка
+        получают собственные анимации."""
         self._target = name
         if self._fading or name == self.sm.current:
+            return
+        transition = self._transition_for(name)
+        if transition is not None:
+            self._fading = True
+            self._transition_token += 1
+            token = self._transition_token
+            transition.bind(on_complete=lambda *a: self._transition_done(token))
+            self.sm.transition = transition
+            self.sm.current = name
+            # страховка для тестовой заглушки Kivy, где ScreenManager не запускает переход
+            Clock.schedule_once(lambda dt: self._transition_done(token),
+                                transition.duration + 0.12)
             return
         self._fading = True
         animation = Animation(opacity=theme.FADE_PEAK, duration=theme.FADE_IN, t='out_quad')
         animation.bind(on_complete=self._fade_swap)
         animation.start(self.fade)
+
+    def _transition_for(self, name):
+        """Какой нестандартный переход нужен для пары (текущий экран, новый экран)."""
+        current = self.sm.current
+        if (current == 'menu' and name in MENU_ARC_TARGETS) or \
+                (name == 'menu' and current in MENU_ARC_TARGETS):
+            return ArcTransition(reverse=(current != 'menu'))
+        if (current, name) == ('mode', 'betting'):
+            # соревновательный: список режимов уходит влево, ставка приезжает справа
+            direction = 'left' if self.mode == 'competitive' else 'right'
+            return SlideTransition(direction=direction)
+        if (current, name) == ('betting', 'mode'):
+            # обратный путь: ставка уезжает вправо, режим возвращается слева
+            direction = 'right' if self.mode == 'competitive' else 'left'
+            return SlideTransition(direction=direction)
+        return None
+
+    def _transition_done(self, token):
+        if token != self._transition_token:
+            return
+        self._transition_token += 1
+        self.sm.transition = self._no_transition
+        self._fading = False
 
     def _fade_swap(self, *args):
         self.sm.current = self._target

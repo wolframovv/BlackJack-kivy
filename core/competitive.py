@@ -168,6 +168,8 @@ class Table:
         self.hole_hidden = False        # закрыта ли вторая карта дилера
         self.split_used = set()         # кто уже делал сплит в этом раунде (один раз за раунд)
         self.acted = set()              # кто уже ходил (сдаться можно только первым действием)
+        self.stats = {i: {'interactions': 0, 'gambling': 0, 'knockouts': 0}
+                      for i in range(len(players))}
 
     # ---------- колода ----------
     def build_deck(self):
@@ -248,6 +250,27 @@ class Table:
         """Чужие живые руки: те, на кого можно подействовать (кто встал, тот защищён)."""
         return [(i, j) for i, j in self._live_slots() if i != actor]
 
+    def _stat(self, pi, key, amount=1):
+        """Статистика игрока за раунд: взаимодействия, азартные ходы, выбитые боты."""
+        if pi in self.stats:
+            self.stats[pi][key] += amount
+
+    def _count_interaction(self, pi, targets):
+        if any(i != pi for i in targets):
+            self._stat(pi, 'interactions')
+
+    def _active_slots(self):
+        return {(i, j) for i, p in enumerate(self.players)
+                for j, h in enumerate(p.hands) if h.is_active}
+
+    def _count_knockouts(self, pi, before):
+        """Сколько ботов потеряли все живые руки из-за эффекта игрока."""
+        before_players = {i for i, _ in before}
+        after_players = {i for i, _ in self._active_slots()}
+        for victim in before_players - after_players:
+            if victim != pi:
+                self._stat(pi, 'knockouts')
+
     def play_round(self):
         """Весь раунд сразу (решения принимают контроллеры). Возвращает RoundReport."""
         return self.drive(self.iter_round())
@@ -259,6 +282,8 @@ class Table:
         self.hit_counts = {}
         self.split_used = set()
         self.acted = set()
+        self.stats = {i: {'interactions': 0, 'gambling': 0, 'knockouts': 0}
+                      for i in range(len(self.players))}
         self.build_deck()
         for p in self.players:
             p.hands = []
@@ -383,6 +408,13 @@ class Table:
         choice = yield Request('action', pi, hi, tuple(allowed), self.view(pi))
         if choice not in allowed:
             choice = 'stand'
+        value = cards_value(hand.cards)
+        if choice == 'hit' and 17 <= value <= 20:
+            self._stat(pi, 'gambling')
+        elif choice == 'double' and 16 <= value <= 20:
+            self._stat(pi, 'gambling')
+        elif choice == 'split' and value in (18, 20):
+            self._stat(pi, 'gambling')
         yield Notice('action', {'player': pi, 'hand': hi, 'action': choice})
         if choice == 'stand':
             hand.is_stand = True
@@ -483,13 +515,16 @@ class Table:
             counts.append(len(hand.cards))
             pool.extend(hand.cards)
             hand.cards = []
+        before = self._active_slots()
         self.rng.shuffle(pool)
         for (i, j), count in zip(slots, counts):
             hand = self.players[i].hands[j]
             hand.cards, pool = pool[:count], pool[count:]
             self._check_bust(hand)
-        yield self._event('troll', pi, sorted({i for i, _ in slots if i != pi}),
-                          f'hands={len(slots)}', hands=slots)
+        others = sorted({i for i, _ in slots if i != pi})
+        self._count_interaction(pi, others)
+        self._count_knockouts(pi, before)
+        yield self._event('troll', pi, others, f'hands={len(slots)}', hands=slots)
         return False
 
     def _sp_snc(self, pi, hi):
@@ -503,6 +538,8 @@ class Table:
         if not use:
             yield self._event('snc', pi, (), 'declined')
             return False
+        if cards_value(hand.cards) in (18, 20):
+            self._stat(pi, 'gambling')
         player.balance -= hand.bet
         copy = TableHand(hand.bet)
         copy.cards = self._clone_cards(hand.cards)
@@ -535,8 +572,11 @@ class Table:
         else:
             ti, tj = choice
             target = self.players[ti].hands[tj]
+            before = self._active_slots()
             source = target.cards if plus else hand.cards
             self._add_copy(target, min(source, key=min_key))
+            self._count_interaction(pi, [ti])
+            self._count_knockouts(pi, before)
             yield self._event(kind, pi, [ti], 'other', hands=[(ti, tj)],
                               origin=(ti, tj) if plus else (pi, hi))
         return False
@@ -566,6 +606,7 @@ class Table:
         if action not in ('hit', 'stand'):
             action = 'stand'
         slots = self._live_slots()
+        before = self._active_slots()
         for i, j in slots:
             hand = self.players[i].hands[j]
             if action == 'stand':
@@ -573,8 +614,10 @@ class Table:
             else:
                 hand.add_card(self._draw_normal())
                 self._check_bust(hand)
-        yield self._event('one_for_all', pi, sorted({i for i, _ in slots if i != pi}),
-                          action, hands=slots)
+        others = sorted({i for i, _ in slots if i != pi})
+        self._count_interaction(pi, others)
+        self._count_knockouts(pi, before)
+        yield self._event('one_for_all', pi, others, action, hands=slots)
         return True
 
     def _sp_loser(self, pi, hi):
@@ -594,6 +637,7 @@ class Table:
             mine = self.players[pi].hands[hi]
             mine.add_card(max(removed, key=max_key))
             self._check_bust(mine)
+        self._count_interaction(pi, affected)
         yield self._event('loser', pi, sorted(affected), f'removed={len(removed)}',
                           hands=slots + [(pi, hi)])
         return False
@@ -634,5 +678,6 @@ class Table:
         ti, tj = choice
         target = self.players[ti].hands[tj]
         hand.cards, target.cards = target.cards, hand.cards
+        self._count_interaction(pi, [ti])
         yield self._event('swap', pi, [ti], 'used', hands=[(pi, hi), (ti, tj)])
         return False

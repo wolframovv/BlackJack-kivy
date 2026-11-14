@@ -8,6 +8,7 @@
 Все карты на экране приводятся в соответствие со столом функцией _sync: что появилось, то
 вылетает из колоды, что переехало, то плавно едет на новое место.
 """
+import os
 import random
 from functools import partial
 
@@ -15,6 +16,9 @@ from kivy.animation import Animation
 from kivy.clock import Clock
 from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.image import Image
+from kivy.uix.label import Label
 from kivy.uix.widget import Widget
 
 from core.bots import PROFILES, make_bot
@@ -22,11 +26,12 @@ from core.cards import SUITS, cards_value
 from core.competitive import (Config, Controller, DEALER, FixedCard, Player, Request,
                               SPECIAL_KINDS, SPECIAL_TITLES, Table)
 from core.i18n import duration_text, t
+from core.ranks import delta_for_game
 from .. import theme
 from ..sound import sounds
-from ..widgets import (AvatarImage, CardWidget, ConfirmDialog, DimOverlay, HighlightBox, Lbl,
-                       OverlayPanel, SpecialCardWidget, StyledButton, TargetZone, TurnBoard,
-                       VerticalShade)
+from ..widgets import (BASE_DIR, AvatarImage, CardWidget, ConfirmDialog, DimOverlay,
+                       HighlightBox, Lbl, OverlayPanel, SpecialCardWidget, StyledButton,
+                       TargetZone, TurnBoard, VerticalShade)
 from .base import BaseScreen
 
 CONFIG = Config(decks=1, specials=SPECIAL_KINDS * 2)    # вариант C: 52 карты + 18 спец-карт
@@ -44,6 +49,7 @@ EFFECT_HOLD = 1.0                # сколько показывается ре�
 SPECIAL_ASKS = ('snc', 'min', 'one_for_all', 'swap', 'dealer_card')   # запросы по спец-картам
 ACTION_KEYS = ('hit', 'stand', 'double', 'split', 'surrender')   # кнопки действий слева направо
 OFFSCREEN = -100000              # куда уезжают спрятанные кнопки (см. _place_buttons)
+WASTED_PATH = os.path.join(BASE_DIR, 'etc', 'wasted.png')
 
 GOLD_HEX = 'ffd700'
 
@@ -75,16 +81,24 @@ class TableScreen(BaseScreen):
         self._leave_dialog = None
         self._m = {}
         self._name_widths = {}          # место -> (текст, шрифт, ширина подписи)
+        self._wasted_seats = set()
 
         # слои: затемнения по краям, колода и карты, уходящие карты, большая спец-карта
         self.layer = Widget()
         self.fade_layer = Widget()
         self.spec_layer = Widget()
+        self.wasted_layer = Widget()
         self.deck_widgets = [CardWidget(face_up=False) for _ in range(5)]
         self.shade = VerticalShade(size_hint=(None, None))      # затемнение сверху экрана
         self.shade_bottom = VerticalShade(size_hint=(None, None), bottom=True)   # и снизу
-        for widget in (self.shade, self.shade_bottom, self.layer, self.fade_layer):
+        for widget in (self.shade, self.shade_bottom, self.layer, self.fade_layer,
+                       self.wasted_layer):
             self.add_widget(widget)
+        self.wasted_images = [Image(source=WASTED_PATH, fit_mode='contain',
+                                    size_hint=(None, None), opacity=0)
+                              for _ in range(SEATS)]
+        for image in self.wasted_images:
+            self.wasted_layer.add_widget(image)
 
         # подписи мест: 0 — игрок, 1..4 — боты
         self.seat_avatar = [AvatarImage(size_hint=(None, None)) for _ in range(SEATS)]
@@ -138,9 +152,18 @@ class TableScreen(BaseScreen):
         self.dim = DimOverlay(size_hint=(None, None), opacity=0)
         self.add_widget(self.dim)
         self.result_panel = OverlayPanel(size_hint=(None, None), opacity=0, padding=dp(14))
-        self.result_label = Lbl(font_size=sp(24), color=theme.GOLD)
+        self.result_label = Lbl(font_size=sp(20), color=theme.GOLD, shorten=True)
         self.result_balance = Lbl(size_hint_y=None, height=dp(30), font_size=sp(20),
                                   color=theme.WHITE)
+        self.elo_row = FloatLayout(size_hint_y=None, height=dp(32))
+        self.result_elo = Label(font_name=theme.FONT, font_size=sp(18), color=theme.GOLD,
+                                size_hint=(None, None), text_size=(None, None))
+        self.result_delta = Label(font_name=theme.FONT, font_size=sp(20),
+                                  color=theme.GREEN_TEXT, size_hint=(None, None),
+                                  text_size=(None, None), opacity=0)
+        self.elo_row.add_widget(self.result_elo)
+        self.elo_row.add_widget(self.result_delta)
+        self.elo_row.bind(size=self._layout_elo_row)
         self.result_note = Lbl(size_hint_y=None, height=dp(26), font_size=sp(16),
                                color=theme.RED_TEXT)
         row = BoxLayout(size_hint_y=None, height=theme.BUTTON_H, spacing=theme.SPACING)
@@ -153,7 +176,8 @@ class TableScreen(BaseScreen):
             button = StyledButton(base_color=color, down_color=down, on_release=handler)
             self.result_buttons[key] = button
             row.add_widget(button)
-        for widget in (self.result_label, self.result_balance, self.result_note, row):
+        for widget in (self.result_label, self.result_balance, self.elo_row,
+                       self.result_note, row):
             self.result_panel.add_widget(widget)
         self.add_widget(self.result_panel)
 
@@ -203,6 +227,7 @@ class TableScreen(BaseScreen):
         self._turn = None
         self._outcomes = {}
         self._name_widths = {}
+        self._wasted_seats = set()
         self.engine = None
         self.players = []
         for _, widget, _ in self._cards.values():
@@ -216,12 +241,23 @@ class TableScreen(BaseScreen):
             widget.opacity = 0
         self.caption.text = ''
         self.result_note.text = ''
+        Animation.cancel_all(self.result_delta)
+        Animation.cancel_all(self.result_elo)
+        self._elo_animating = False
+        self.result_elo.text = ''
+        self.result_elo.opacity = 1
+        self.result_delta.text = ''
+        self.result_delta.opacity = 0
         self._hide_zones()
         self._set_actions(())
         self.board.set_text('', animate=False)
         for index in range(SEATS):
             self.seat_info[index].text = ''
             self.seat_name[index].text = ''
+            self.seat_name[index].color = theme.WHITE
+            self.seat_avatar[index].gray = False
+            Animation.cancel_all(self.wasted_images[index])
+            self.wasted_images[index].opacity = 0
         self.dealer_label.text = t('dealer')
 
     def _build_deck(self):
@@ -309,7 +345,7 @@ class TableScreen(BaseScreen):
         self._place(self.board, 0.33 * W, 0.92 * H, 0.34 * W, 0.07 * H)
         self._place(self.caption, 0.15 * W, 0.405 * H, 0.7 * W, 0.05 * H)
         self._place(self.dim, 0, 0, W, H)
-        self._place(self.result_panel, W * 0.25, H * 0.25, W * 0.5, H * 0.5)
+        self._place(self.result_panel, W * 0.18, H * 0.19, W * 0.64, H * 0.62)
 
         self._place(self.shade, 0, 0.72 * H, W, 0.28 * H)
         self._place(self.shade_bottom, 0, 0, W, 0.28 * H)
@@ -324,6 +360,59 @@ class TableScreen(BaseScreen):
             self._sync(animate=False)
             self._refresh_labels()
             self._place_turn_box()
+            self._place_wasted_images()
+
+    def _update_wasted(self):
+        """При переборе/сдаче красит карты/ник/аватар в серый и ставит WASTED."""
+        if self.engine is None:
+            return
+        for index, player in enumerate(self.engine.players[:SEATS]):
+            wasted = any(h.status in ('bust', 'surrender') for h in player.hands)
+            # Карты красим здесь же, а не в _sync: иначе они сереют раньше аватара,
+            # WASTED и звука.
+            for hand in player.hands:
+                hand_wasted = hand.status in ('bust', 'surrender')
+                for card in hand.cards:
+                    entry = self._cards.get(id(card))
+                    if entry is not None:
+                        entry[1].wasted = hand_wasted
+            self.seat_name[index].color = theme.GRAY if wasted else theme.WHITE
+            self.seat_avatar[index].gray = wasted
+            if wasted and index not in self._wasted_seats:
+                self._wasted_seats.add(index)
+                self._show_wasted(index)
+                sounds.play('wasted')
+            elif not wasted:
+                self.wasted_images[index].opacity = 0
+        self._place_wasted_images()
+
+    def _place_wasted_image(self, index):
+        player = self.engine.players[index] if self.engine else None
+        if player is None or not player.hands:
+            return
+        rects = [self._hand_rect(index, hand) for hand in range(len(player.hands))]
+        x0 = min(r[0] for r in rects)
+        y0 = min(r[1] for r in rects)
+        x1 = max(r[0] + r[2] for r in rects)
+        y1 = max(r[1] + r[3] for r in rects)
+        w, h = max(x1 - x0, dp(64)), max(y1 - y0, dp(48))
+        image = self.wasted_images[index]
+        image.size = (w * 1.18, h * 1.12)
+        image.pos = ((x0 + x1) / 2 - image.width / 2,
+                     (y0 + y1) / 2 - image.height / 2)
+
+    def _place_wasted_images(self):
+        if not self._m or self.engine is None:
+            return
+        for index in self._wasted_seats:
+            self._place_wasted_image(index)
+
+    def _show_wasted(self, index):
+        image = self.wasted_images[index]
+        Animation.cancel_all(image)
+        self._place_wasted_image(index)
+        image.opacity = 0.30       # сразу видна полупрозрачной, затем быстро проявляется
+        Animation(opacity=1, duration=0.10, t='out_quad').start(image)
 
     def _place_seat(self, index):
         """Ставит аватар и имя одной строкой, отцентрованной над веером карт."""
@@ -490,6 +579,8 @@ class TableScreen(BaseScreen):
             else:
                 widget = entry[1]
             widget.size = (g['cw'], g['ch'])
+            if seat in self._wasted_seats:
+                widget.wasted = True
             self._cards[key] = (card, widget, (seat if seat != DEALER else -1, j, k))
             Animation.cancel_all(widget)
             if animate:
@@ -610,6 +701,7 @@ class TableScreen(BaseScreen):
             self.dealer_label.text = f"{t('dealer')}   {t('visible')}: {dealer.cards[0].value}"
         else:
             self.dealer_label.text = f"{t('dealer')}   {t('total')}: {dealer.value}"
+        self._update_wasted()
 
     @staticmethod
     def _outcome_text(result):
@@ -711,6 +803,7 @@ class TableScreen(BaseScreen):
         return 0.12 if info['action'] == 'hit' else 0.4
 
     def _n_surrender(self, info):
+        self._sync(animate=False)
         self._refresh_labels()
         self._place_turn_box()
         return 0.5
@@ -926,6 +1019,25 @@ class TableScreen(BaseScreen):
             self.result_label.text = t('tie')
             self.result_label.color = theme.YELLOW
         self.result_balance.text = f"{t('new_balance')}{user['balance']}"
+        old_elo = int(user.get('elo', 0))
+        stats = getattr(self.engine, 'stats', {}).get(0, {}) if self.engine else {}
+        delta = delta_for_game(net, stats.get('interactions', 0),
+                               stats.get('gambling', 0), stats.get('knockouts', 0),
+                               getattr(self.engine, 'rng', None))
+        new_elo = max(0, old_elo + delta)      # elo не может уйти ниже нуля
+        delta = new_elo - old_elo               # показываем фактическое изменение
+        user['elo'] = new_elo
+        self._elo_new = new_elo
+        self._elo_animating = False
+        self.result_elo.text = f"{t('new_elo')}{old_elo}"
+        self.result_elo.opacity = 1
+        self.result_delta.text = f"{delta:+d}" if delta else '0'
+        self.result_delta.color = (theme.RED_TEXT if net < 0 else
+                                   theme.GREEN_TEXT if net > 0 else theme.GRAY)
+        self.result_delta.opacity = 0
+        run = self._run
+        Clock.schedule_once(
+            lambda dt: self._show_elo_delta(run), 0.05)
         self.app.storage.ensure_lock_state(user)
         remaining = self.app.storage.lock_remaining(user)
         self.result_note.text = (t('bankrupt_note') + duration_text(remaining)
@@ -933,6 +1045,68 @@ class TableScreen(BaseScreen):
         self.app.storage.save()
         self.dim.opacity = 1
         self.result_panel.opacity = 1
+
+
+    @staticmethod
+    def _label_size(label):
+        """Натуральный размер текста Label (без обрезки по ширине виджета)."""
+        label.text_size = (None, None)
+        update = getattr(label, 'texture_update', None)
+        if update is not None:
+            update()
+        size = getattr(label, 'texture_size', None)
+        if size and size[0] > 0:
+            return size[0], size[1]
+        # заглушка Kivy в тестах
+        return len(label.text) * label.font_size * 0.4, label.font_size * 1.2
+
+    def _layout_elo_row(self, *args):
+        """Центрирует «Новый ELO: …», а delta ставит вплотную справа."""
+        row = self.elo_row
+        width, height = row.size
+        elo_w, elo_h = self._label_size(self.result_elo)
+        self.result_elo.size = (elo_w, elo_h)
+        self.result_elo.x = row.x + (width - elo_w) / 2
+        self.result_elo.y = row.center_y - elo_h / 2
+        delta_w, delta_h = self._label_size(self.result_delta)
+        self.result_delta.size = (delta_w, delta_h)
+        self.result_delta.y = row.center_y - delta_h / 2
+        self._elo_delta_x = self.result_elo.right + dp(6)
+        if not getattr(self, '_elo_animating', False):
+            self.result_delta.x = self._elo_delta_x
+
+    def _show_elo_delta(self, run):
+        """Delta выезжает вплотную к надписи ELO, затем гаснет."""
+        if run != self._run or not self._over:
+            return
+        self._elo_animating = True
+        self._layout_elo_row()
+        final_x = self._elo_delta_x
+        self.result_delta.x = final_x + dp(40)
+        self.result_delta.opacity = 0
+        slide = Animation(x=final_x, opacity=1, duration=0.30, t='out_cubic')
+        slide.bind(on_complete=lambda *a: Clock.schedule_once(
+            lambda dt: self._fade_elo_delta(run), 0.35))
+        slide.start(self.result_delta)
+
+    def _fade_elo_delta(self, run):
+        if run != self._run or not self._over:
+            return
+        fade = Animation(opacity=0, duration=0.22, t='in_quad')
+        fade.bind(on_complete=lambda *a: self._reveal_elo(run))
+        fade.start(self.result_delta)
+
+    def _reveal_elo(self, run):
+        """После исчезновения delta показывает новый elo по центру."""
+        if run != self._run or not self._over:
+            return
+        self._elo_animating = False
+        self.result_delta.text = ''
+        self.result_delta.opacity = 0
+        self.result_elo.text = f"{t('new_elo')}{self._elo_new}"
+        self.result_elo.opacity = 0
+        self._layout_elo_row()
+        Animation(opacity=1, duration=0.22, t='out_quad').start(self.result_elo)
 
     def ask_leave(self, *args):
         """«Меню» и клавиша «Назад»: во время раунда переспрашиваем, потому что поставленные

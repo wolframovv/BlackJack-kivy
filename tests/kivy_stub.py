@@ -286,6 +286,38 @@ class NoTransition:
         pass
 
 
+class TransitionBase(Widget):
+    """Заглушка базового перехода: ScreenManager в тестах переключает экраны сразу."""
+
+    duration = NumericProperty(0.4)
+
+    def __init__(self, **kwargs):
+        self.screen_in = kwargs.pop('screen_in', None)
+        self.screen_out = kwargs.pop('screen_out', None)
+        self.manager = kwargs.pop('manager', None)
+        self.is_active = False
+        super().__init__(**kwargs)
+
+    def start(self, manager):
+        self.manager = manager
+        self.is_active = True
+
+    def stop(self):
+        self.is_active = False
+
+    def add_screen(self, screen):
+        pass
+
+    def remove_screen(self, screen):
+        pass
+
+    def on_progress(self, progression):
+        pass
+
+    def on_complete(self):
+        pass
+
+
 class ScreenManager(Widget):
     SIZE_BEFORE_PRE_ENTER = True   # в тестах переключается, чтобы проверить оба порядка
 
@@ -437,7 +469,9 @@ def install():
     mod('kivy.properties', StringProperty=StringProperty, NumericProperty=NumericProperty,
         BooleanProperty=BooleanProperty, ListProperty=ListProperty)
     mod('kivy.graphics', Color=Instruction, Ellipse=Instruction, Rectangle=Instruction,
-        Line=Instruction, InstructionGroup=InstructionGroup)
+        Line=Instruction, RoundedRectangle=Instruction, InstructionGroup=InstructionGroup,
+        PushMatrix=Instruction, PopMatrix=Instruction,
+        Scale=Instruction, Rotate=Instruction)
 
     class TextureStub:
         def __init__(self, size):
@@ -479,5 +513,6 @@ def install():
     mod('kivy.uix.stencilview', StencilView=StencilView)
     mod('kivy.uix.modalview', ModalView=ModalView)
     mod('kivy.uix.screenmanager', Screen=Screen, ScreenManager=ScreenManager,
-        FadeTransition=FadeTransition, NoTransition=NoTransition)
+        TransitionBase=TransitionBase, FadeTransition=FadeTransition,
+        NoTransition=NoTransition)
     return sys.modules

@@ -57,11 +57,15 @@ class ProfileScreen(BaseScreen):
         self.rank_icon = RankIcon(size_hint=(None, 1), width=dp(26))
         self.name_label = Label(font_name=theme.FONT, font_size=sp(22), color=theme.GOLD,
                             size_hint=(None, 1))
+        self.elo_label = Label(font_name=theme.FONT, font_size=sp(20), color=theme.GRAY,
+                               size_hint=(None, 1))
         self.name_row = BoxLayout(size_hint=(None, None), height=dp(30), spacing=dp(6),
                                 pos_hint={'center_x': 0.5})
         self.name_row.add_widget(self.rank_icon)
         self.name_row.add_widget(self.name_label)
+        self.name_row.add_widget(self.elo_label)
         self.name_label.bind(texture_size=self._fit_name)
+        self.elo_label.bind(texture_size=self._fit_elo)
         self.login_label = Lbl(size_hint_y=None, height=dp(20), font_size=sp(13),
                                color=theme.GRAY, shorten=True)
         self.lock_label = Lbl(size_hint_y=None, height=dp(20), font_size=sp(13),
@@ -114,6 +118,7 @@ class ProfileScreen(BaseScreen):
         self.title.text = t('my_profile')
         self.avatar.source = self.app.avatar_source(user)
         self.name_label.text = storage.display_name(user)
+        self.elo_label.text = f"({user['elo']})"
         self.rank_icon.source = self.app.rank_source(storage.rank(user))
         self.login_label.text = f"{t('login_label')}: {user['username']}"
         remaining = storage.lock_remaining(user)
@@ -137,7 +142,15 @@ class ProfileScreen(BaseScreen):
     # ---------- имя ----------
     def _fit_name(self, label, size):
         label.width = size[0]
-        self.name_row.width = self.rank_icon.width + dp(6) + size[0]
+        self._fit_name_row()
+
+    def _fit_elo(self, label, size):
+        label.width = size[0]
+        self._fit_name_row()
+
+    def _fit_name_row(self):
+        self.name_row.width = (self.rank_icon.width + dp(6) + self.name_label.width
+                               + dp(6) + self.elo_label.width)
     
     def open_rename(self, *args):
         user = self.app.user

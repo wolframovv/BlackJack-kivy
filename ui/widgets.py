@@ -4,7 +4,7 @@ from functools import lru_cache
 
 from kivy.animation import Animation
 from kivy.core.image import Image as CoreImage
-from kivy.graphics import Color, Ellipse, Line, Rectangle
+from kivy.graphics import Color, Ellipse, Line, Rectangle, RoundedRectangle
 from kivy.graphics.texture import Texture
 from kivy.metrics import dp, sp
 from kivy.properties import (BooleanProperty, ListProperty, NumericProperty,
@@ -154,6 +154,7 @@ class AvatarImage(Widget):
     """Аватар в форме круга. source — путь к картинке; если файла нет, рисуется серая
     «фигурка человека» (как аватар по умолчанию)."""
     source = StringProperty('')
+    gray = BooleanProperty(False)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -165,9 +166,12 @@ class AvatarImage(Widget):
             self._body = Ellipse()
             self._image_color = Color(1, 1, 1, 0)
             self._image = Ellipse()
-            Color(theme.GOLD[0], theme.GOLD[1], theme.GOLD[2], 0.9)
+            self._ring_color = Color(theme.GOLD[0], theme.GOLD[1], theme.GOLD[2], 0.9)
             self._ring = Line(width=dp(1.2))
-        self.bind(pos=self._update, size=self._update, source=self._load)
+            self._gray_color = Color(0.4, 0.4, 0.4, 0)
+            self._gray = Ellipse()
+        self.bind(pos=self._update, size=self._update, source=self._load,
+                  gray=self._update)
         self._update()
         self._load()
 
@@ -175,7 +179,7 @@ class AvatarImage(Widget):
         diameter = min(self.width, self.height)
         radius = diameter / 2.0
         cx, cy = self.center_x, self.center_y
-        for ellipse in (self._bg, self._image):
+        for ellipse in (self._bg, self._image, self._gray):
             ellipse.pos = (cx - radius, cy - radius)
             ellipse.size = (diameter, diameter)
         self._head.pos = (cx - 0.2 * radius, cy + 0.05 * radius)
@@ -183,6 +187,10 @@ class AvatarImage(Widget):
         self._body.pos = (cx - 0.5 * radius, cy - 0.78 * radius)
         self._body.size = (radius, radius)
         self._ring.circle = (cx, cy, radius)
+        self._gray_color.rgba = ((0.38, 0.38, 0.38, 0.70) if self.gray
+                                 else (0, 0, 0, 0))
+        self._ring_color.rgba = ((0.5, 0.5, 0.5, 0.9) if self.gray
+                                 else (*theme.GOLD[:3], 0.9))
 
     def _load(self, *args):
         texture = None
@@ -239,6 +247,7 @@ class CardWidget(Widget):
     font_scale = NumericProperty(0.3)    # размер запасной надписи относительно высоты карты
     visible = BooleanProperty(True)
     dim = BooleanProperty(False)
+    wasted = BooleanProperty(False)  # серый фильтр: перебор или сдача
     landed = False                   # карта уже долетела до своего места
 
     img_source = StringProperty('')
@@ -249,10 +258,26 @@ class CardWidget(Widget):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._wasted_widget = Widget(size_hint=(None, None), disabled=True)
+        with self._wasted_widget.canvas:
+            self._wasted_color = Color(0.38, 0.38, 0.38, 0)
+            self._wasted_rect = RoundedRectangle(radius=[dp(8)])
+        self.add_widget(self._wasted_widget)
         self.bind(rank=self._refresh, suit=self._refresh, skin=self._refresh,
-                  face_up=self._refresh, visible=self._opacity, dim=self._opacity)
+                  face_up=self._refresh, visible=self._opacity, dim=self._opacity,
+                  pos=self._refresh_wasted, size=self._refresh_wasted,
+                  wasted=self._refresh_wasted)
         self._refresh()
         self._opacity()
+        self._refresh_wasted()
+
+    def _refresh_wasted(self, *args):
+        self._wasted_widget.pos = self.pos
+        self._wasted_widget.size = self.size
+        self._wasted_rect.pos = self.pos
+        self._wasted_rect.size = self.size
+        self._wasted_color.rgba = ((0.38, 0.38, 0.38, 0.70) if self.wasted
+                                   else (0, 0, 0, 0))
 
     def _opacity(self, *args):
         self.opacity = (0.5 if self.dim else 1.0) if self.visible else 0.0

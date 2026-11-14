@@ -1,7 +1,7 @@
-"""Звуки игры: click, card, win, lose (файлы лежат в etc/sounds/)."""
+"""Звуки игры: click, card, win, lose, wasted (файлы лежат в etc/sounds/)."""
 import os
 
-NAMES = ('click', 'card', 'win', 'lose')
+NAMES = ('click', 'card', 'win', 'lose', 'wasted')
 EXTENSIONS = ('.mp3', '.ogg', '.wav')
 
 

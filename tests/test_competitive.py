@@ -71,6 +71,56 @@ def texts(cards):
     return sorted(code(c) for c in cards)
 
 
+
+class StatsTests(unittest.TestCase):
+    def test_min_on_other_counts_interaction_and_knockout(self):
+        table = make_table(controllers=[Scripted(min_target=(1, 0)), Scripted(), Scripted()])
+        table.players[0].hands = [hand('10H 5S')]
+        table.players[1].hands = [hand('KH QD')]                  # 20 + 5 = перебор
+        table.drive(table._sp_min(0, 0))
+        self.assertEqual(table.stats[0], {'interactions': 1, 'gambling': 0, 'knockouts': 1})
+
+    def test_swap_counts_interaction_without_knockout(self):
+        table = make_table(controllers=[Scripted(swap_target=(1, 0)), Scripted(), Scripted()])
+        table.players[0].hands = [hand('10H 5S')]
+        table.players[1].hands = [hand('9C 8D')]
+        table.drive(table._sp_swap(0, 0))
+        self.assertEqual(table.stats[0], {'interactions': 1, 'gambling': 0, 'knockouts': 0})
+
+    def test_one_for_all_hit_knocks_out_a_bot(self):
+        table = make_table(controllers=[Scripted(ofa='hit'), Scripted(), Scripted()])
+        table.players[0].hands = [hand('10H 5S')]
+        table.players[1].hands = [hand('9C 8D')]
+        table.players[2].hands = [hand('KH QD')]                  # 20 + 2 = перебор
+        table.deck = [card('2C'), card('2C'), card('2C')]
+        table.drive(table._sp_one_for_all(0, 0))
+        self.assertEqual(table.stats[0], {'interactions': 1, 'gambling': 0, 'knockouts': 1})
+
+    def test_gambling_hit_double_split_and_snc(self):
+        table = make_table(controllers=[Scripted(actions=['hit']), Scripted(), Scripted()])
+        table.players[0].hands = [hand('10H 8S')]                 # 18: hit опасен
+        table.deck = [card('2C')]
+        table.drive(table._act(0, 0))
+        self.assertEqual(table.stats[0]['gambling'], 1)
+
+        table = make_table(controllers=[Scripted(actions=['double']), Scripted(), Scripted()])
+        table.players[0].hands = [hand('10H 6S')]                 # 16: double опасен
+        table.deck = [card('2C')]
+        table.drive(table._act(0, 0))
+        self.assertEqual(table.stats[0]['gambling'], 1)
+
+        table = make_table(controllers=[Scripted(actions=['split']), Scripted(), Scripted()])
+        table.players[0].hands = [hand('9H 9S')]                  # 18: split опасен
+        table.deck = [card('2C'), card('3C')]
+        table.drive(table._act(0, 0))
+        self.assertEqual(table.stats[0]['gambling'], 1)
+
+        table = make_table(controllers=[Scripted(snc=True), Scripted(), Scripted()])
+        table.players[0].hands = [hand('10H 8S')]                 # 18: SnC опасен
+        table.drive(table._sp_snc(0, 0))
+        self.assertEqual(table.stats[0]['gambling'], 1)
+
+
 class DeckTests(unittest.TestCase):
     def test_deck_composition(self):
         table = make_table(config=Config(2, SPECIAL_KINDS * 2))

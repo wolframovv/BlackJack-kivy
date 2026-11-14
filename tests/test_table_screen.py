@@ -6,8 +6,10 @@ from unittest import mock
 
 from core.bots import Bot
 from core.cards import SUITS
+from core.i18n import t
 from core.competitive import SpecialCard, Table
 from tests.test_ui_flow import AppCase, C, Clock, center, touch_owner
+from ui import theme
 from ui.screens import competitive
 from ui.widgets import SpecialCardWidget
 
@@ -86,6 +88,56 @@ class StartAndRoundTests(TableCase):
         self.fake_deck()
         self.start()
         self.assertTrue(self.app.background.image.source.endswith('game_bg.jpg'))
+
+    def test_finish_adds_elo_and_shows_delta(self):
+        self.fake_deck()
+        self.start()
+        s = self.screen_t
+        old_elo = self.app.user['elo']
+        with mock.patch.object(competitive, 'delta_for_game', return_value=15):
+            s.buttons['stand'].press()
+            self.advance_until(lambda: s._over, limit=200)
+        self.assertEqual(s.result_delta.text, '+15')
+        Clock.settle()
+        self.assertEqual(self.app.user['elo'], old_elo + 15)
+        self.assertEqual(s.result_delta.text, '')          # delta исчезла
+        self.assertEqual(s.result_delta.opacity, 0)
+        self.assertIn(str(old_elo + 15), s.result_elo.text)  # показан новый elo
+        self.assertIn(t('new_elo'), s.result_elo.text)
+        self.assertAlmostEqual(s.result_elo.center_x, s.elo_row.center_x, delta=1)
+
+    def _finish_with_net(self, net):
+        self.fake_deck()
+        self.start()
+        s = self.screen_t
+        with mock.patch.object(competitive, 'delta_for_game', return_value=15):
+            s._finish(SimpleNamespace(nets={0: net}))
+        return s
+
+    def test_elo_delta_is_green_on_win(self):
+        s = self._finish_with_net(100)
+        self.assertEqual(s.result_delta.color, theme.GREEN_TEXT)
+
+    def test_elo_delta_is_red_on_loss_even_if_delta_positive(self):
+        s = self._finish_with_net(-100)
+        self.assertEqual(s.result_delta.color, theme.RED_TEXT)
+
+    def test_elo_delta_is_gray_on_tie(self):
+        s = self._finish_with_net(0)
+        self.assertEqual(s.result_delta.color, theme.GRAY)
+
+    def test_elo_never_goes_below_zero(self):
+        self.fake_deck()
+        self.start()
+        s = self.screen_t
+        self.app.user['elo'] = 10
+        with mock.patch.object(competitive, 'delta_for_game', return_value=-100):
+            s.buttons['stand'].press()
+            self.advance_until(lambda: s._over, limit=200)
+        self.assertEqual(s.result_delta.text, '-10')       # фактическое изменение
+        Clock.settle()
+        self.assertEqual(self.app.user['elo'], 0)
+        self.assertIn(str(0), s.result_elo.text)
 
     def test_table_opens_with_five_players_and_deals(self):
         self.fake_deck()
@@ -465,6 +517,61 @@ class SpecialResultTests(TableCase):
         self.assertEqual(widget.skin, self.app.user['current_skin'])  # выбранный пак скинов
         self.assertTrue(widget.has_image)                           # картинка карты, не AVG
         self.assertEqual((widget.rank, widget.suit), s._fixed_card_face(card))
+
+
+class WastedTests(TableCase):
+    def test_human_bust_grays_cards_name_avatar_and_shows_wasted(self):
+        self.fake_deck(human=('10H', '6S'), extras=('10D',))
+        self.start()
+        s = self.screen_t
+        self.wait_request('action')
+        with mock.patch.object(competitive.sounds, 'play') as play:
+            s.buttons['hit'].press()
+            self.advance_until(lambda: not s.engine.players[0].hands[0].is_active)
+            Clock.settle()
+        for card in s.engine.players[0].hands[0].cards:
+            self.assertTrue(s._cards[id(card)][1].wasted)
+        self.assertEqual(s.seat_name[0].color, theme.GRAY)
+        self.assertTrue(s.seat_avatar[0].gray)
+        self.assertEqual(s.wasted_images[0].opacity, 1)
+        self.assertIn('wasted', [call.args[0] for call in play.call_args_list])
+
+    def test_wasted_visuals_apply_together_not_in_sync(self):
+        self.fake_deck(human=('10H', '6S'))
+        self.start()
+        s = self.screen_t
+        hand = s.engine.players[0].hands[0]
+        hand.cards.append(C('10D'))
+        hand.is_active = False
+        s._sync(animate=False)
+        # _sync сам по себе не должен сереть карты раньше аватара/WASTED
+        for card in hand.cards:
+            self.assertFalse(s._cards[id(card)][1].wasted)
+        self.assertFalse(s.seat_avatar[0].gray)
+        s._refresh_labels()
+        for card in hand.cards:
+            self.assertTrue(s._cards[id(card)][1].wasted)
+        self.assertTrue(s.seat_avatar[0].gray)
+        self.assertEqual(s.seat_name[0].color, theme.GRAY)
+        Clock.advance(0.11)       # быстрый fade-in WASTED
+        self.assertEqual(s.wasted_images[0].opacity, 1)
+
+    def test_surrender_also_triggers_wasted(self):
+        self.fake_deck(human=('10H', '6S'))
+        self.start()
+        s = self.screen_t
+        self.wait_request('action')
+        self.assertFalse(s.buttons['surrender'].disabled)
+        with mock.patch.object(competitive.sounds, 'play') as play:
+            s.buttons['surrender'].press()
+            self.advance_until(lambda: s.engine.players[0].hands[0].surrendered)
+            Clock.settle()
+        for card in s.engine.players[0].hands[0].cards:
+            self.assertTrue(s._cards[id(card)][1].wasted)
+        self.assertEqual(s.seat_name[0].color, theme.GRAY)
+        self.assertTrue(s.seat_avatar[0].gray)
+        self.assertEqual(s.wasted_images[0].opacity, 1)
+        self.assertIn('wasted', [call.args[0] for call in play.call_args_list])
 
 
 class SpecialCardFlowTests(TableCase):

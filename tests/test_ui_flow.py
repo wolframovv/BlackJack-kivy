@@ -17,6 +17,7 @@ from core.round import DEALER, INSURANCE, OVER, PLAYER  # noqa: E402
 from core.skins import SKINS  # noqa: E402
 import main  # noqa: E402
 from ui import theme  # noqa: E402
+from ui.transitions import ArcTransition, SlideTransition  # noqa: E402
 from tests.test_profile_lock import FakeClock  # noqa: E402
 
 Clock = kivy_stub.Clock
@@ -575,10 +576,10 @@ class OverlayAndLayoutTests(AppCase):
         self.assertEqual(self.app.fade.opacity, 0)
         self.assertFalse(self.app.fade.on_touch_down(None))      # не мешает, пока невидимо
 
-        self.app.go('profile')
+        self.app.go('login')                                     # у входа остаётся fade
         Clock.advance(theme.FADE_IN + 0.01)
         self.assertEqual(self.app.fade.opacity, theme.FADE_PEAK)   # в пике всё затемнено
-        self.assertEqual(self.sm.current, 'profile')               # экран сменился под завесой
+        self.assertEqual(self.sm.current, 'login')                 # экран сменился под завесой
         self.assertTrue(self.app.fade.on_touch_down(None))         # и нажатия заблокированы
         Clock.settle()
         self.assertEqual(self.app.fade.opacity, 0)
@@ -586,10 +587,13 @@ class OverlayAndLayoutTests(AppCase):
 
     def test_go_during_fade_retargets(self):
         self.login()
-        self.app.go('profile')
-        self.app.go('skins')
+        self.app.logout()
         Clock.settle()
-        self.assertEqual(self.sm.current, 'skins')
+        self.assertEqual(self.sm.current, 'login')
+        self.app.go('menu')
+        self.app.go('login')                                      # вторая цель побеждает
+        Clock.settle()
+        self.assertEqual(self.sm.current, 'login')
 
     def test_double_tap_start_does_not_charge_twice(self):
         self.login()
@@ -665,6 +669,64 @@ class SoftTotalTests(AppCase):
         hand = self.game.round.hands[0]
         self.assertGreater(hand.value, 21)
         self.assertTrue(all(self.game._cards[c].dim for c in hand.cards))
+
+
+class TransitionTests(AppCase):
+    def test_all_menu_items_use_arc_both_ways(self):
+        self.login()
+        for target in ('mode', 'skins', 'leaderboard', 'profile'):
+            self.app.go(target)
+            Clock.settle()
+            self.assertEqual(self.sm.current, target, target)
+            back = self.app._transition_for('menu')
+            self.assertIsInstance(back, ArcTransition, target)
+            self.assertTrue(back.reverse, target)
+            self.app.go('menu')
+            Clock.settle()
+            self.assertEqual(self.sm.current, 'menu')
+            forward = self.app._transition_for(target)
+            self.assertIsInstance(forward, ArcTransition, target)
+            self.assertFalse(forward.reverse, target)
+
+    def test_menu_mode_uses_arc_both_ways(self):
+        self.login()
+        self.app.go('mode')
+        Clock.settle()
+        self.assertEqual(self.sm.current, 'mode')
+        forward = self.app._transition_for('menu')
+        self.assertIsInstance(forward, ArcTransition)
+        self.assertTrue(forward.reverse)                 # обратно: меню снизу, режим вверх
+
+        self.app.go('menu')
+        Clock.settle()
+        self.assertEqual(self.sm.current, 'menu')
+        back = self.app._transition_for('mode')
+        self.assertIsInstance(back, ArcTransition)
+        self.assertFalse(back.reverse)
+
+    def test_betting_slide_depends_on_chosen_mode(self):
+        self.login()
+        self.app.go('mode')
+        Clock.settle()
+
+        self.app.mode = 'competitive'
+        to_bet = self.app._transition_for('betting')
+        self.assertIsInstance(to_bet, SlideTransition)
+        self.assertEqual(to_bet.direction, 'left')        # соревновательный — справа
+        self.app.go('betting')
+        Clock.settle()
+        back = self.app._transition_for('mode')
+        self.assertEqual(back.direction, 'right')         # обратно — справа
+
+        self.app.go('mode')
+        Clock.settle()
+        self.app.mode = 'single'
+        to_bet = self.app._transition_for('betting')
+        self.assertEqual(to_bet.direction, 'right')       # одиночный — слева
+        self.app.go('betting')
+        Clock.settle()
+        back = self.app._transition_for('mode')
+        self.assertEqual(back.direction, 'left')
 
 
 class BackgroundTests(AppCase):

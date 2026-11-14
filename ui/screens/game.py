@@ -112,7 +112,7 @@ class GameScreen(BaseScreen):
         self.dim = DimOverlay(size_hint=(None, None), opacity=0)
         self.add_widget(self.dim)
         self.result_panel = OverlayPanel(size_hint=(None, None), opacity=0, padding=dp(14))
-        self.result_label = Lbl(font_size=sp(24), color=theme.GOLD)
+        self.result_label = Lbl(font_size=sp(20), color=theme.GOLD, shorten=True)
         self.result_balance = Lbl(size_hint_y=None, height=dp(30), font_size=sp(20),
                                   color=theme.WHITE)
         self.result_note = Lbl(size_hint_y=None, height=dp(26), font_size=sp(16),
@@ -260,7 +260,7 @@ class GameScreen(BaseScreen):
 
         self._place(self.banner, width * 0.3, height * 0.125, width * 0.4, height * 0.075)
         self._place(self.dim, 0, 0, width, height)
-        self._place(self.result_panel, width * 0.25, height * 0.25, width * 0.5, height * 0.5)
+        self._place(self.result_panel, width * 0.18, height * 0.19, width * 0.64, height * 0.62)
         self._place(self.insurance_panel, width * 0.4, height * 0.3, width * 0.4, height * 0.34)
 
         bar_h = height * 0.095
