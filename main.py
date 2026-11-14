@@ -72,9 +72,11 @@ class BlackjackApp(App):
         self.mode = 'single'           # 'single' или 'competitive' (после экрана ставки)
         self._fading = False
         self._target = None
+        self.background_path = os.path.join(BASE_DIR, 'etc', 'background.jpg')
+        self.game_background_path = os.path.join(BASE_DIR, 'etc', 'game_bg.jpg')
 
         root = FloatLayout()
-        self.background = ParticleBackground(os.path.join(BASE_DIR, 'etc', 'background.jpg'))
+        self.background = ParticleBackground(self.background_path)
         root.add_widget(self.background)
 
         self.sm = ScreenManager(transition=NoTransition())
@@ -127,6 +129,11 @@ class BlackjackApp(App):
     def avatar_source(self, user):
         """Путь к аватару игрока или к картинке по умолчанию (etc/default_pic.png)."""
         return self.storage.avatar_file(user) or self.default_avatar
+
+    def set_game_background(self, enabled):
+        """Фон игрового стола (etc/game_bg.jpg) только во время игры, иначе обычный."""
+        self.background.set_image(self.game_background_path if enabled
+                                  else self.background_path)
 
     def rank_source(self, rank):
         """Путь к картинке ранга etc/elo/elo<N>.png или '', если файла нет."""
@@ -240,6 +247,10 @@ class BlackjackApp(App):
             return True
         current = self.sm.current
         if current in BACK_TARGETS:
+            screen = self.sm.current_screen
+            handler = getattr(screen, 'handle_back', None)
+            if handler is not None and handler():
+                return True
             self.go(BACK_TARGETS[current])
             return True
         if current == 'game':

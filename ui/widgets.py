@@ -330,12 +330,17 @@ class SpecialCardWidget(CardWidget):
 
 
 class VerticalShade(Widget):
-    """Затемнение-полоска: сверху тёмное, вниз плавно становится прозрачным."""
+    """Затемнение-полоска: сверху тёмное, вниз плавно становится прозрачным.
 
-    def __init__(self, strength=0.88, steps=64, **kwargs):
+    bottom=True переворачивает полоску: тёмное внизу, вверх прозрачно.
+    """
+
+    def __init__(self, strength=0.88, steps=64, bottom=False, **kwargs):
         super().__init__(**kwargs)
-        # alphas[0] у нижнего края (прозрачно), alphas[-1] у верхнего (самое тёмное)
+        # alphas[0] у нижнего края, alphas[-1] у верхнего
         self.alphas = [int(255 * strength * (row / (steps - 1)) ** 1.4) for row in range(steps)]
+        if bottom:
+            self.alphas.reverse()      # теперь внизу самое тёмное, вверху прозрачно
         texture = Texture.create(size=(1, steps), colorfmt='rgba')
         data = b''.join(bytes((0, 0, 0, alpha)) for alpha in self.alphas)
         texture.blit_buffer(data, colorfmt='rgba', bufferfmt='ubyte')
@@ -359,8 +364,8 @@ class TurnBoard(StencilView):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._front = Lbl(size_hint=(None, None), color=theme.WHITE, font_size=sp(24))
-        self._back = Lbl(size_hint=(None, None), color=theme.WHITE, font_size=sp(24))
+        self._front = Lbl(size_hint=(None, None), color=theme.WHITE, font_size=sp(19))
+        self._back = Lbl(size_hint=(None, None), color=theme.WHITE, font_size=sp(19))
         self.add_widget(self._front)
         self.add_widget(self._back)
         self.bind(pos=self._layout, size=self._layout)

@@ -12,6 +12,7 @@ def make_panel(width_hint=0.5, height_hint=0.94):
 
 class BaseScreen(Screen):
     animated_background = True   # крутить ли частицы фона на этом экране
+    game_background = False      # True — за игровым столом показывать etc/game_bg.jpg
 
     def __init__(self, app, **kwargs):
         super().__init__(**kwargs)
@@ -19,6 +20,7 @@ class BaseScreen(Screen):
 
     def on_pre_enter(self, *args):
         self.refresh_texts()
+        self.app.set_game_background(self.game_background)
         self.app.background.set_animated(self.animated_background)
 
     def refresh_texts(self):

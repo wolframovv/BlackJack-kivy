@@ -18,7 +18,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.widget import Widget
 
 from core.bots import PROFILES, make_bot
-from core.cards import cards_value
+from core.cards import SUITS, cards_value
 from core.competitive import (Config, Controller, DEALER, FixedCard, Player, Request,
                               SPECIAL_KINDS, SPECIAL_TITLES, Table)
 from core.i18n import duration_text, t
@@ -50,6 +50,7 @@ GOLD_HEX = 'ffd700'
 
 class TableScreen(BaseScreen):
     animated_background = theme.PARTICLES_IN_GAME
+    game_background = True               # etc/game_bg.jpg
     rng_factory = random.Random          # источник случайности стола (в тестах подменяется)
 
     def __init__(self, app, **kwargs):
@@ -73,14 +74,16 @@ class TableScreen(BaseScreen):
         self._over = False
         self._leave_dialog = None
         self._m = {}
+        self._name_widths = {}          # место -> (текст, шрифт, ширина подписи)
 
-        # слои: колода и карты, уходящие карты, большая спец-карта
+        # слои: затемнения по краям, колода и карты, уходящие карты, большая спец-карта
         self.layer = Widget()
         self.fade_layer = Widget()
         self.spec_layer = Widget()
         self.deck_widgets = [CardWidget(face_up=False) for _ in range(5)]
-        self.shade = VerticalShade(size_hint=(None, None))     # затемнение сверху экрана
-        for widget in (self.shade, self.layer, self.fade_layer):
+        self.shade = VerticalShade(size_hint=(None, None))      # затемнение сверху экрана
+        self.shade_bottom = VerticalShade(size_hint=(None, None), bottom=True)   # и снизу
+        for widget in (self.shade, self.shade_bottom, self.layer, self.fade_layer):
             self.add_widget(widget)
 
         # подписи мест: 0 — игрок, 1..4 — боты
@@ -199,6 +202,7 @@ class TableScreen(BaseScreen):
         self._mirror = False
         self._turn = None
         self._outcomes = {}
+        self._name_widths = {}
         self.engine = None
         self.players = []
         for _, widget, _ in self._cards.values():
@@ -258,20 +262,20 @@ class TableScreen(BaseScreen):
     def _metrics(self):
         W, H = self.width, self.height
         seats = []
-        gap = dp(6)
-        # игрок: внизу по центру, карты крупнее всех. Над веером: имя по центру, выше итог и
-        # ставка; аватар слева. Поля у имени с обеих сторон одинаковые, поэтому оно ровно над веером.
+        gap = dp(4)
+        # игрок: внизу по центру, карты крупнее всех. Над веером по центру — одна строка
+        # «аватар + имя» (выше неё итог руки и ставка).
         ch = 0.17 * H
-        d = 0.075 * H
+        d = 0.055 * H
         x, w, fan_y = 0.29 * W, 0.42 * W, 0.135 * H
-        name_y = fan_y + ch + 0.004 * H
+        header_y = fan_y + ch + 0.004 * H
         seats.append({'x': x, 'y': fan_y, 'w': w, 'cw': ch * CARD_RATIO, 'ch': ch,
-                      'avatar': (x, name_y + (0.084 * H - d) / 2, d),
-                      'name': (x + d + gap, name_y, w - 2 * (d + gap), 0.042 * H),
-                      'info': (x + d + gap, name_y + 0.044 * H, w - 2 * (d + gap), 0.04 * H)})
+                      'header_y': header_y, 'header_h': d, 'avatar_d': d,
+                      'name_gap': gap, 'name_cap': 0.36 * W,
+                      'info': (x, header_y + d + 0.004 * H, w, 0.04 * H)})
         # боты: по два слева и справа по дуге (места 1 и 2 слева, 3 и 4 справа)
         ch = 0.115 * H
-        d = 0.065 * H
+        d = 0.055 * H
         for cx, y0 in ((0.115 * W, 0.20 * H), (0.16 * W, 0.56 * H),
                        (0.84 * W, 0.56 * H), (0.885 * W, 0.20 * H)):
             w = 0.2 * W
@@ -279,8 +283,8 @@ class TableScreen(BaseScreen):
             fan_y = y0 + 0.05 * H
             header_y = fan_y + ch + 0.008 * H
             seats.append({'x': x, 'y': fan_y, 'w': w, 'cw': ch * CARD_RATIO, 'ch': ch,
-                          'avatar': (x, header_y + (0.07 * H - d) / 2, d),
-                          'name': (x + d + gap, header_y, w - 2 * (d + gap), 0.07 * H),
+                          'header_y': header_y, 'header_h': d, 'avatar_d': d,
+                          'name_gap': gap, 'name_cap': max(dp(20), w - d - dp(12)),
                           'info': (x, y0, w, 0.048 * H)})
         dealer_ch = 0.145 * H
         deck_w = dealer_ch * CARD_RATIO
@@ -298,11 +302,8 @@ class TableScreen(BaseScreen):
         W, H = m['W'], m['H']
         if not W or not H:
             return
-        for index, seat in enumerate(m['seats']):
-            ax, ay, d = seat['avatar']
-            self._place(self.seat_avatar[index], ax, ay, d, d)
-            self._place(self.seat_name[index], *seat['name'])
-            self._place(self.seat_info[index], *seat['info'])
+        for index in range(len(m['seats'])):
+            self._place_seat(index)
         dealer = m['dealer']
         self._place(self.dealer_label, dealer['x'], 0.872 * H, dealer['w'], 0.045 * H)
         self._place(self.board, 0.33 * W, 0.92 * H, 0.34 * W, 0.07 * H)
@@ -311,6 +312,7 @@ class TableScreen(BaseScreen):
         self._place(self.result_panel, W * 0.25, H * 0.25, W * 0.5, H * 0.5)
 
         self._place(self.shade, 0, 0.72 * H, W, 0.28 * H)
+        self._place(self.shade_bottom, 0, 0, W, 0.28 * H)
         self._place(self.menu_button, 0.015 * W, 0.915 * H, 0.1 * W, 0.07 * H)
         self._place_buttons()
 
@@ -322,6 +324,45 @@ class TableScreen(BaseScreen):
             self._sync(animate=False)
             self._refresh_labels()
             self._place_turn_box()
+
+    def _place_seat(self, index):
+        """Ставит аватар и имя одной строкой, отцентрованной над веером карт."""
+        if not self._m:
+            return
+        seat = self._m['seats'][index]
+        d, gap, height = seat['avatar_d'], seat['name_gap'], seat['header_h']
+        width, shortened = self._measure_name(index, seat['name_cap'])
+        left = seat['x'] + seat['w'] / 2 - (d + gap + width) / 2
+        self._place(self.seat_avatar[index], left, seat['header_y'], d, height)
+        name = self.seat_name[index]
+        self._place(name, left + d + gap, seat['header_y'], width, height)
+        name.text_size = (width, height)      # текст по центру строки, по высоте тоже
+        name.shorten = shortened
+        self._place(self.seat_info[index], *seat['info'])
+
+    def _measure_name(self, index, cap):
+        """Ширина подписи по её тексту. В настоящем Kivy — из текстуры, в тестах — оценка.
+
+        Подпись не должна разъезжаться на всю ширину места: иначе аватар и имя снова
+        окажутся далеко друг от друга. Слишком длинное имя подрезается многоточием."""
+        name = self.seat_name[index]
+        key = (name.text, name.font_size)
+        cached = self._name_widths.get(index)
+        if cached is not None and cached[0] == key:
+            width = cached[1]
+        else:
+            width = 0
+            update = getattr(name, 'texture_update', None)
+            if update is not None:              # настоящий Kivy: меряем текстуру
+                name.text_size = (None, None)
+                name.shorten = False
+                update()
+                width = name.texture_size[0]
+            if width <= 0:                      # заглушка Kivy или пустая подпись
+                width = len(name.text) * name.font_size * 0.4
+            width = max(width, dp(12))
+            self._name_widths[index] = (key, width)
+        return min(width, cap), width > cap
 
     def _row_rects(self, count):
         """Ряд из count одинаковых кнопок по центру экрана внизу."""
@@ -393,11 +434,23 @@ class TableScreen(BaseScreen):
         return x, y, w, h
 
     # ------------------------------------------------------------ карты на столе
+    def _fixed_card_face(self, card):
+        """Лицо карты «среднее»: ранг = значение, масть случайная.
+
+        В правилах это по-прежнему FixedCard со своим value, а для картинки берём обычную
+        карту из текущего пака скинов. Единицу показываем тузом: карты «1» в наборах нет.
+        Масть запоминаем на самой карте, чтобы при перерисовке она не менялась."""
+        face = getattr(card, '_display_face', None)
+        if face is None:
+            rank = 'A' if card.value == 1 else str(card.value)
+            face = (rank, random.choice(SUITS))
+            card._display_face = face
+        return face
+
     def _make_widget(self, card, hidden):
-        if isinstance(card, FixedCard):                 # карта «среднее»: число и подпись AVG
-            widget = CardWidget(rank='avg', suit='', skin=self._skin, face_up=True)
-            widget.fallback_text = f"{card.value}\nAVG"
-            return widget
+        if isinstance(card, FixedCard):                 # карта «среднее»: обычная карта
+            rank, suit = self._fixed_card_face(card)    # с числом среднего и случайной мастью
+            return CardWidget(rank=rank, suit=suit, skin=self._skin, face_up=True)
         return CardWidget(rank=card.rank, suit=card.suit, skin=self._skin,
                           face_up=not hidden)
 
@@ -549,6 +602,7 @@ class TableScreen(BaseScreen):
                 parts.append(text)
             self.seat_info[index].text = '   '.join(parts)
         self.seat_name[0].text = f"{eng.players[0].name}   ${eng.players[0].balance}"
+        self._place_seat(0)             # у игрока в подписи ещё и баланс: ширина меняется
         dealer = eng.dealer
         if not dealer.cards:
             self.dealer_label.text = t('dealer')

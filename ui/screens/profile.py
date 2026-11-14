@@ -70,7 +70,7 @@ class ProfileScreen(BaseScreen):
             left.add_widget(widget)
 
         # справа: статистика
-        stats = Panel(size_hint_x=0.58, padding=dp(10), spacing=dp(2))
+        stats = Panel(size_hint_x=0.58, padding=dp(20), spacing=dp(2))
         self.header = Lbl(size_hint_y=None, height=dp(28), font_size=sp(21), color=theme.GOLD)
         stats.add_widget(self.header)
         colors = [theme.WHITE, theme.GREEN_TEXT, theme.RED_TEXT, theme.YELLOW, theme.GOLD]

@@ -30,6 +30,7 @@ MAX_ROWS = 2                 # сплит доступен один раз, зн
 
 class GameScreen(BaseScreen):
     animated_background = theme.PARTICLES_IN_GAME
+    game_background = True       # etc/game_bg.jpg
 
     def __init__(self, app, **kwargs):
         super().__init__(app, **kwargs)

@@ -1,19 +1,27 @@
 """Главное меню."""
-from kivy.metrics import dp, sp
+import os
+
+from kivy.metrics import dp
+from kivy.uix.image import Image
 
 from core.i18n import i18n, t
 from .. import theme
-from ..widgets import Lbl, StyledButton
+from ..widgets import BASE_DIR, StyledButton
 from .base import BaseScreen, make_panel
+
+LOGO_PATH = os.path.join(BASE_DIR, 'etc', 'menu', 'logo.png')
 
 
 class MenuScreen(BaseScreen):
     def __init__(self, app, **kwargs):
         super().__init__(app, **kwargs)
-        panel = make_panel(theme.PANEL_W)
-        self.title = Lbl(text='BLACKJACK', font_size=sp(40), color=theme.GOLD,
-                         outline_width=2, outline_color=theme.BLACK)
-        panel.add_widget(self.title)
+        panel = make_panel(theme.PANEL_W, 0.98)
+        panel.padding = dp(8)
+        panel.spacing = dp(4)
+        # вместо текстового заголовка — картинка-логотип
+        self.logo = Image(source=LOGO_PATH if os.path.exists(LOGO_PATH) else '',
+                          fit_mode='contain')
+        panel.add_widget(self.logo)
 
         spec = [
             ('play', theme.DARK_GREEN, theme.GREEN, lambda *a: self.app.go_play()),
@@ -40,7 +48,6 @@ class MenuScreen(BaseScreen):
         self.add_widget(self.lang_button)
 
     def refresh_texts(self):
-        self.title.text = t('blackjack')
         for key, button in self.buttons.items():
             button.text = t(key)
         self.lang_button.text = i18n.short

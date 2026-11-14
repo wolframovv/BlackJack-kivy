@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from core.bots import Bot
+from core.cards import SUITS
 from core.competitive import SpecialCard, Table
 from tests.test_ui_flow import AppCase, C, Clock, center, touch_owner
 from ui.screens import competitive
@@ -81,6 +82,11 @@ class TableCase(AppCase):
 
 
 class StartAndRoundTests(TableCase):
+    def test_table_uses_game_background(self):
+        self.fake_deck()
+        self.start()
+        self.assertTrue(self.app.background.image.source.endswith('game_bg.jpg'))
+
     def test_table_opens_with_five_players_and_deals(self):
         self.fake_deck()
         self.start(bet=100)
@@ -292,9 +298,24 @@ class ButtonsAndLayoutTests(TableCase):
         self.assertGreater(shade.alphas[-1], 180)                    # сверху тёмное
         self.assertLess(s.children.index(shade), s.children.index(s.layer))  # карты поверх тени
 
+    def test_bottom_shade_is_dark_at_the_bottom_and_fades_up(self):
+        self.fake_deck()
+        self.start()
+        s = self.screen_t
+        shade = s.shade_bottom
+        self.assertAlmostEqual(shade.y, 0)                           # от самого низа экрана
+        self.assertAlmostEqual(shade.width, s._m['W'])
+        human = s._m['seats'][0]
+        self.assertLess(shade.top, human['y'] + human['ch'])         # ниже верха карт игрока
+        self.assertGreater(shade.top, human['y'])                    # но заходит за карты
+        self.assertEqual(shade.alphas[-1], 0)                        # вверху прозрачно
+        self.assertEqual(shade.alphas, sorted(shade.alphas, reverse=True))  # вниз только темнее
+        self.assertGreater(shade.alphas[0], 180)                     # внизу тёмное
+        self.assertLess(s.children.index(shade), s.children.index(s.layer))  # карты поверх тени
+
 
 class NamesAndFramesTests(TableCase):
-    def test_names_are_centered_right_above_each_hand(self):
+    def test_avatar_and_name_are_one_group_centered_above_each_hand(self):
         self.fake_deck()
         self.start()
         s = self.screen_t
@@ -302,11 +323,14 @@ class NamesAndFramesTests(TableCase):
         for seat, g in enumerate(s._m['seats']):
             fan_center = g['x'] + g['w'] / 2
             name = s.seat_name[seat]
-            self.assertAlmostEqual(name.x + name.width / 2, fan_center, delta=0.5, msg=seat)
-            self.assertGreaterEqual(name.y, g['y'] + g['ch'] - 1, seat)      # над веером
-            self.assertEqual(name.halign, 'center')
             avatar = s.seat_avatar[seat]
-            self.assertLessEqual(avatar.right, name.x + 1, seat)             # аватар не налезает
+            self.assertLessEqual(avatar.right, name.x + 1, seat)     # аватар вплотную слева
+            self.assertGreaterEqual(name.x, avatar.right - 1, seat)
+            group_center = (avatar.x + name.right) / 2
+            self.assertAlmostEqual(group_center, fan_center, delta=0.5, msg=seat)  # вся строка
+            self.assertGreaterEqual(min(name.y, avatar.y),               # над веером
+                                    g['y'] + g['ch'] - 1, seat)
+            self.assertEqual(name.halign, 'center')
         dealer = s._m['dealer']
         self.assertAlmostEqual(s.dealer_label.x + s.dealer_label.width / 2,
                                dealer['x'] + dealer['w'] / 2, delta=0.5)
@@ -426,15 +450,21 @@ class SpecialResultTests(TableCase):
         self.assertIn('BLACKJACK', s.seat_info[0].text)
         self.assertIn('Вы победили', s.result_label.text)
 
-    def test_averaged_card_is_drawn_with_value_and_avg_label(self):
+    def test_averaged_card_shows_value_with_random_suit_and_skin(self):
         self.fake_deck(human=('9H', '8S'), extras=('*average',))
         self.start()
         s = self.screen_t
         self.wait_request('action')
         s.buttons['hit'].press()
         self.advance_until(lambda: self.human_cards()[:1] == ['~9'])
-        widget = s._cards[id(s.engine.players[0].hands[0].cards[0])][1]
-        self.assertEqual(widget.fallback_text, '9\nAVG')            # (9+8)/2 = 8,5 -> 9
+        card = s.engine.players[0].hands[0].cards[0]
+        widget = s._cards[id(card)][1]
+        self.assertEqual(card.value, 9)                             # (9+8)/2 = 8,5 -> 9
+        self.assertEqual(widget.rank, '9')                          # на карте число среднего
+        self.assertIn(widget.suit, SUITS)                           # масть случайная
+        self.assertEqual(widget.skin, self.app.user['current_skin'])  # выбранный пак скинов
+        self.assertTrue(widget.has_image)                           # картинка карты, не AVG
+        self.assertEqual((widget.rank, widget.suit), s._fixed_card_face(card))
 
 
 class SpecialCardFlowTests(TableCase):

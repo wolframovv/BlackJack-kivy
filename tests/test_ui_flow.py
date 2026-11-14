@@ -14,6 +14,7 @@ import core.round  # noqa: E402
 from core.cards import Card, Deck  # noqa: E402
 from core.i18n import i18n, t  # noqa: E402
 from core.round import DEALER, INSURANCE, OVER, PLAYER  # noqa: E402
+from core.skins import SKINS  # noqa: E402
 import main  # noqa: E402
 from ui import theme  # noqa: E402
 from tests.test_profile_lock import FakeClock  # noqa: E402
@@ -149,6 +150,12 @@ class FlowTests(AppCase):
         login.toggle_password()
         self.assertFalse(login.pass_input.password)
 
+    def test_menu_shows_logo_image(self):
+        self.login()
+        menu = self.screen('menu')
+        self.assertTrue(menu.logo.source.endswith(os.path.join('etc', 'menu', 'logo.png')))
+        self.assertFalse(hasattr(menu, 'title'))      # текстового заголовка больше нет
+
     def test_menu_navigation_and_language(self):
         self.login()
         menu = self.screen('menu')
@@ -196,6 +203,43 @@ class FlowTests(AppCase):
         self.assertIn('gold', user['skins'])
         skins.select({'id': 'gold'})
         self.assertEqual(user['current_skin'], 'gold')
+
+    def test_skins_preview_slides_in_and_back(self):
+        self.login()
+        self.app.go('skins')
+        Clock.settle()
+        skins = self.screen('skins')
+        self.assertEqual(len(skins.rows), len(SKINS))
+        self.assertEqual(len(skins.open_buttons), len(SKINS))
+
+        skins.open_buttons['gold'].press()                  # нажатие на строку скина
+        Clock.settle()
+        self.assertEqual(skins.preview_skin['id'], 'gold')
+        self.assertEqual(skins.preview_name.text, t('skin_gold'))
+        self.assertEqual(skins.preview_desc.text, t('skin_desc_gold'))
+        self.assertTrue(skins.preview_image.source.endswith(
+            os.path.join('cards', 'gold', 'preview.png')))
+        self.assertAlmostEqual(skins.preview.opacity, 1)    # fade-in
+        self.assertAlmostEqual(skins.preview.x, skins.content.x)
+        self.assertLess(skins.list_scroll.x, skins.content.x)   # список уехал влево
+        self.assertEqual(skins.blocker.opacity, 1)              # касания списка заблокированы
+        self.assertTrue(skins.action_buttons['default'].disabled)   # «Выбрано» — так и должно
+        self.assertFalse(skins.action_buttons['gold'].disabled)     # остальные не серые
+        self.assertFalse(skins.action_buttons['skeleton'].disabled)
+        self.assertFalse(skins.list_scroll.disabled)                # ScrollView не выключаем
+
+        self.app.toggle_language()                         # превью переводится на месте
+        self.assertEqual(skins.preview_name.text, 'Test')
+        self.assertIn('Golden cards', skins.preview_desc.text)
+        self.app.toggle_language()
+
+        self.assertTrue(self.app._on_keyboard(None, 27))    # Esc/«Назад» закрывает превью
+        Clock.settle()
+        self.assertIsNone(skins.preview_skin)
+        self.assertEqual(skins.preview.opacity, 0)
+        self.assertAlmostEqual(skins.list_scroll.x, skins.content.x)
+        self.assertEqual(skins.blocker.opacity, 0)
+        self.assertFalse(skins.list_scroll.disabled)
 
     def test_back_key(self):
         self.login()
@@ -644,13 +688,16 @@ class BackgroundTests(AppCase):
         self.app.go_betting()
         Clock.settle()
         self.assertTrue(self.app.background._animated)
+        self.assertTrue(self.app.background.image.source.endswith('background.jpg'))
         self.screen('betting').input.type('50')
         self.screen('betting').start()
         Clock.settle()
         self.assertFalse(self.app.background._animated)   # на столе частиц нет
+        self.assertTrue(self.app.background.image.source.endswith('game_bg.jpg'))
         self.game.buttons['menu'].press()
         Clock.settle()
         self.assertTrue(self.app.background._animated)
+        self.assertTrue(self.app.background.image.source.endswith('background.jpg'))
 
 
 if __name__ == '__main__':

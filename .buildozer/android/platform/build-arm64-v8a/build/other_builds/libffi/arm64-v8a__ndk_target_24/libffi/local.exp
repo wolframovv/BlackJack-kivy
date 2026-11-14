@@ -1,0 +1,3 @@
+set CC_FOR_TARGET "/home/wolframovv/android-sdk/ndk/25.1.8937393/toolchains/llvm/prebuilt/linux-x86_64/bin/clang -target aarch64-linux-android24 -fomit-frame-pointer -march=armv8-a -fPIC"
+set CXX_FOR_TARGET "/home/wolframovv/android-sdk/ndk/25.1.8937393/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ -target aarch64-linux-android24 -fomit-frame-pointer -march=armv8-a -fPIC"
+set compiler_vendor "clang"

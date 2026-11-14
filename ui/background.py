@@ -23,15 +23,16 @@ class ParticleBackground(FloatLayout):
         self._event = None
         self._animated = False
         self._group_added = False
+        self._image_path = None
 
         # запасной зелёный фон, если картинки нет
         with self.canvas.before:
             Color(*theme.GREEN)
             self._fill = Rectangle()
 
-        self.image = Image(source=image_path if os.path.exists(image_path) else '',
-                           fit_mode='fill', size_hint=(None, None))
+        self.image = Image(source='', fit_mode='fill', size_hint=(None, None))
         self.add_widget(self.image)
+        self.set_image(image_path)
 
         self._group = InstructionGroup()
         self._particles = []
@@ -40,6 +41,14 @@ class ParticleBackground(FloatLayout):
         self.bind(size=self._layout, pos=self._layout)
         self._layout()
         self.set_animated(True)
+
+    def set_image(self, image_path):
+        """Меняет картинку фона: в меню одна, за игровым столом другая."""
+        source = image_path if image_path and os.path.exists(image_path) else ''
+        if source == self._image_path:
+            return
+        self._image_path = source
+        self.image.source = source
 
     # ---------- частицы ----------
     def _build_particles(self):

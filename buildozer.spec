@@ -10,7 +10,7 @@ source.include_patterns = cards/*,cards/*/*,etc/*
 # ИЗМЕНЕНО: tests/* не нужны в приложении
 source.exclude_patterns = bin/*,.buildozer/*,.venv/*,__pycache__/*,*.pyc,build.log,tests/*
 
-version = 0.4.1
+version = 0.5
 
 # ИЗМЕНЕНО: вместо pygame и pyjnius — kivy (pyjnius подтянется сам)
 requirements = python3==3.10.12,hostpython3==3.10.12,kivy==2.3.0
